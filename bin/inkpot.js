@@ -1,25 +1,25 @@
 #!/usr/bin/env node
-// papx — CLI for Paper design tools.
+// inkpot — CLI for Paper design tools.
 //
 // Subcommands:
 //   pdf <prefix>   Build a PDF from Paper artboards named <prefix>/N.
 //   form <arg>     Build a fillable PDF; {field:key} layer names → AcroForm.
 //
 // Each subcommand has its own --help:
-//   papx pdf --help
-//   papx form --help
+//   inkpot pdf --help
+//   inkpot form --help
 
 import { runPdf, PDF_HELP } from '../src/pdf.js';
 import { runForm, FORM_HELP } from '../src/form.js';
 
-const ROOT_HELP = `Usage: papx <command> [options]
+const ROOT_HELP = `Usage: inkpot <command> [options]
 
 Commands:
   pdf <prefix>                 Build an optimised PDF from Paper artboards
   form <prefix-or-artboard>    Build a fillable PDF (AcroForm) from {field:*} nodes
 
-Run 'papx <command> --help' for command-specific options.
-See the README for details: https://github.com/Cwejman/papx`;
+Run 'inkpot <command> --help' for command-specific options.
+See the README for details: https://github.com/Cwejman/inkpot`;
 
 async function main() {
   const [, , subcommand, ...rest] = process.argv;

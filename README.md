@@ -1,29 +1,29 @@
-# papx
+# inkpot
 
 CLI for [Paper](https://paper.design) design tools. Turns artboards into optimised outputs via Paper's local MCP server.
 
 ```sh
-npx papx pdf vp                     # build vp.pdf from Paper frames vp/1, vp/2, ...
-npx papx pdf ww -o web.pdf          # custom output path
-npx papx pdf --list                 # list available artboards
-npx papx form contract-artboard     # build a fillable PDF (AcroForm)
+npx inkpot pdf vp                     # build vp.pdf from Paper frames vp/1, vp/2, ...
+npx inkpot pdf ww -o web.pdf          # custom output path
+npx inkpot pdf --list                 # list available artboards
+npx inkpot form contract-artboard     # build a fillable PDF (AcroForm)
 ```
 
 ## Commands
 
 | Command | Description |
 |---|---|
-| `papx pdf <prefix>` | Build an optimised PDF from artboards named `<prefix>/1`, `<prefix>/2`, … — [docs](docs/pdf.md) |
-| `papx form <arg>` | Build a fillable PDF; text nodes named `{field:<key>}` become AcroForm text fields — [docs](docs/form.md) |
+| `inkpot pdf <prefix>` | Build an optimised PDF from artboards named `<prefix>/1`, `<prefix>/2`, … — [docs](docs/pdf.md) |
+| `inkpot form <arg>` | Build a fillable PDF; text nodes named `{field:<key>}` become AcroForm text fields — [docs](docs/form.md) |
 
-Run `papx <command> --help` for command-specific flags.
+Run `inkpot <command> --help` for command-specific flags.
 
 ## Install
 
 ```sh
-npm install -g papx
+npm install -g inkpot
 # or use npx without installing
-npx papx pdf vp
+npx inkpot pdf vp
 ```
 
 Requires Node.js ≥ 20, Google Chrome (or Chromium), and [Paper](https://paper.design) running with its MCP server enabled (defaults to `http://127.0.0.1:29979/mcp`).
@@ -40,7 +40,7 @@ Paper is a design tool. This CLI takes your canvas and turns it into shippable o
 
 ## Contributing
 
-Future subcommands slot in as new modules under `src/` with a matching entry in `bin/papx.js` — e.g. `papx fonts`, `papx export`. See `src/pdf.js` for the shape of a command.
+Future subcommands slot in as new modules under `src/` with a matching entry in `bin/inkpot.js` — e.g. `inkpot fonts`, `inkpot export`. See `src/pdf.js` for the shape of a command.
 
 ## License
 

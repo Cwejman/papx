@@ -1,9 +1,6 @@
 {
-  "name": "@cwejman/papx",
-  "version": "0.2.0",
-  "publishConfig": {
-    "access": "public"
-  },
+  "name": "inkpot",
+  "version": "0.2.1",
   "description": "CLI for Paper design tools — build optimised PDFs from Paper artboards via MCP.",
   "keywords": [
     "paper",
@@ -14,12 +11,12 @@
   ],
   "type": "module",
   "bin": {
-    "papx": "bin/papx.js"
+    "inkpot": "bin/inkpot.js"
   },
   "main": "./src/pdf.js",
   "exports": {
     ".": "./src/pdf.js",
-    "./bin": "./bin/papx.js"
+    "./bin": "./bin/inkpot.js"
   },
   "files": [
     "bin/",
@@ -33,11 +30,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Cwejman/papx.git"
+    "url": "git+https://github.com/Cwejman/inkpot.git"
   },
-  "homepage": "https://github.com/Cwejman/papx#readme",
+  "homepage": "https://github.com/Cwejman/inkpot#readme",
   "bugs": {
-    "url": "https://github.com/Cwejman/papx/issues"
+    "url": "https://github.com/Cwejman/inkpot/issues"
   },
   "author": "Cwejman",
   "license": "MIT",

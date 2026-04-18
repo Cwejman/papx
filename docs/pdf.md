@@ -7,10 +7,10 @@ Stateless pipeline: Paper → MCP → React → Chrome headless → optimised PD
 ## Quick start
 
 ```sh
-node generate.js --list          # list all artboards in the current Paper file
-node generate.js vp              # frames vp/1, vp/2, ... → vp.pdf
-node generate.js ww -o web.pdf   # custom output path
-node generate.js vp --keep       # keep scratch files for debugging
+inkpot pdf --list          # list all artboards in the current Paper file
+inkpot pdf vp              # frames vp/1, vp/2, ... → vp.pdf
+inkpot pdf ww -o web.pdf   # custom output path
+inkpot pdf vp --keep       # keep scratch files for debugging
 ```
 
 Frames must be named `<prefix>/<number>` in Paper (e.g. `vp/1`, `vp/2`). Legacy space-separator (`WW 2`) also matches. Numbers sort numerically.
@@ -41,8 +41,8 @@ Typical result: a 17-page text-and-bloom deck goes from ~21 MB (naïve Chrome pr
 
 ## Modules
 
-### `generate.js`
-Orchestrator. MCP client, frame resolution, font normalization, HTML assembly, Chrome invocation, cleanup.
+### `src/pdf.js`
+Orchestrator for `inkpot pdf`. MCP client, frame resolution, font normalization, HTML assembly, Chrome invocation, cleanup. Also exports helpers (`fetchJsxBodies`, `renderOptimizedHtml`, `printHtmlToPdf`, `resolveFrameOrPrefix`) reused by `src/form.js`.
 
 Tunable spots:
 - `FONT_LINKS` — Google Fonts stylesheet link (keep in sync with the `DMSans-*` / `Paper Mono Preview` / `Inter Tight` mappings in `normalizeFonts`).
@@ -102,7 +102,7 @@ Tunable knobs at the top of the file: `PAGE_WIDTH_PX`, `BLOOM_MAX_WIDTH`, `PHOTO
 
 **"MCP connection refused"** — Paper isn't running, or the MCP server is on a different port. Open Paper, check the MCP port (defaults to 29979), or pass `--mcp-url`.
 
-**"new Paper JSX pattern crashes the build"** — add a normalization step in `generate.js` → `normalizeFonts` or a new `normalize*` helper. Don't hand-write JSX.
+**"new Paper JSX pattern crashes the build"** — add a normalization step in `src/pdf.js` → `normalizeFonts` or a new `normalize*` helper. Don't hand-write JSX.
 
 ## Design invariants
 

@@ -1,12 +1,12 @@
-# papx form
+# inkpot form
 
-`papx form <arg>` builds a fillable PDF from Paper artboards. Any Text node whose **layer name** matches the pattern `{field:<key>}` becomes an AcroForm text field at the node's rendered position; the node's current text is the field's default value.
+`inkpot form <arg>` builds a fillable PDF from Paper artboards. Any Text node whose **layer name** matches the pattern `{field:<key>}` becomes an AcroForm text field at the node's rendered position; the node's current text is the field's default value.
 
 ```sh
-npx papx form vp-contract              # prefix → pages vp-contract/1, /2, ...
-npx papx form "Asya v11"               # exact artboard name
-npx papx form GQL-0                    # node id
-npx papx form GQL-0 -o contract.pdf    # custom output path
+npx inkpot form vp-contract              # prefix → pages vp-contract/1, /2, ...
+npx inkpot form "Asya v11"               # exact artboard name
+npx inkpot form GQL-0                    # node id
+npx inkpot form GQL-0 -o contract.pdf    # custom output path
 ```
 
 ## How it works

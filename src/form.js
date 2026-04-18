@@ -1,6 +1,6 @@
 // Paper MCP → fillable-PDF generator.
 //
-// Same pipeline as `papx pdf`, plus overlays AcroForm text fields on every
+// Same pipeline as `inkpot pdf`, plus overlays AcroForm text fields on every
 // Paper text node whose layer name matches `^\{field:(.+)\}$`. The capture
 // group becomes the PDF form field name (dotted keys kept verbatim); the
 // node's current text becomes the field's default value.
@@ -27,7 +27,7 @@ import {
   findChrome,
 } from './pdf.js';
 
-export const FORM_HELP = `Usage: papx form [options] <prefix-or-artboard>
+export const FORM_HELP = `Usage: inkpot form [options] <prefix-or-artboard>
 
 Builds a fillable PDF from Paper artboards. Text nodes whose layer name
 matches the pattern {field:<key>} become AcroForm text fields at their

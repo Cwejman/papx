@@ -1,5 +1,5 @@
 // Paper MCP → PDF generator.
-// Exposed as `runPdf(argv)` — the bin/papx.js dispatcher forwards its
+// Exposed as `runPdf(argv)` — the bin/inkpot.js dispatcher forwards its
 // subcommand-args here. Also exports low-level helpers reused by
 // sibling commands (e.g. form.js).
 
@@ -28,7 +28,7 @@ export const FONT_LINKS = `
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&family=EB+Garamond:ital,wght@1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">`;
 
-export const PDF_HELP = `Usage: papx pdf [options] <prefix>
+export const PDF_HELP = `Usage: inkpot pdf [options] <prefix>
 
 Fetches frames named <prefix>/1, <prefix>/2, ... from Paper, sorts numerically, and builds an optimised PDF.
 
@@ -59,7 +59,7 @@ function parsePdfArgs(argv) {
 
 export async function connectMcp(url) {
   const transport = new StreamableHTTPClientTransport(new URL(url));
-  const client = new Client({ name: 'papx', version: '1.0.0' });
+  const client = new Client({ name: 'inkpot', version: '1.0.0' });
   await client.connect(transport);
   return client;
 }
