@@ -1,6 +1,7 @@
 // Paper MCP → PDF generator.
 // Exposed as `runPdf(argv)` — the bin/papx.js dispatcher forwards its
-// subcommand-args here.
+// subcommand-args here. Also exports low-level helpers reused by
+// sibling commands (e.g. form.js).
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
@@ -22,7 +23,7 @@ const CHROME_PATHS = [
   '/usr/bin/chromium-browser',
 ];
 
-const FONT_LINKS = `
+export const FONT_LINKS = `
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&family=EB+Garamond:ital,wght@1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">`;
@@ -56,14 +57,14 @@ function parsePdfArgs(argv) {
 
 // --- MCP Client ---
 
-async function connectMcp(url) {
+export async function connectMcp(url) {
   const transport = new StreamableHTTPClientTransport(new URL(url));
-  const client = new Client({ name: 'papx-pdf', version: '1.0.0' });
+  const client = new Client({ name: 'papx', version: '1.0.0' });
   await client.connect(transport);
   return client;
 }
 
-async function callTool(client, name, args = {}) {
+export async function callTool(client, name, args = {}) {
   const result = await client.callTool({ name, arguments: args });
   if (result.isError) {
     const text = result.content?.map(c => c.text).join('\n') || 'Unknown error';
@@ -75,7 +76,7 @@ async function callTool(client, name, args = {}) {
 
 // --- Frame resolution ---
 
-function resolveFrames(artboards, prefix) {
+export function resolveFrames(artboards, prefix) {
   const matching = [];
   // Match "<prefix>/<num>" or "<prefix> <num>" (slash preferred, space for legacy)
   const separators = ['/', ' '];
@@ -99,9 +100,19 @@ function resolveFrames(artboards, prefix) {
   return matching;
 }
 
+// Try exact artboard name or id first; fall back to numbered-prefix resolution.
+// Returns a list shaped like resolveFrames() output.
+export function resolveFrameOrPrefix(artboards, arg) {
+  const exact = artboards.find(a => a.name === arg);
+  if (exact) return [{ name: exact.name, id: exact.id, number: 1, width: exact.width, height: exact.height }];
+  const byId = artboards.find(a => a.id === arg);
+  if (byId) return [{ name: byId.name, id: byId.id, number: 1, width: byId.width, height: byId.height }];
+  return resolveFrames(artboards, arg);
+}
+
 // --- Font normalization ---
 
-function normalizeFonts(jsx) {
+export function normalizeFonts(jsx) {
   // Most specific patterns first
   jsx = jsx.replace(
     /Paper Mono Preview, ui-monospace, "SFMono-Regular", "SF Mono", "Menlo", "Consolas", "Liberation Mono", monospace/g,
@@ -144,7 +155,7 @@ function normalizeFonts(jsx) {
 
 // --- JSX file assembly ---
 
-function buildJsxFile(jsxBodies, htmlOutputPath) {
+export function buildJsxFile(jsxBodies, htmlOutputPath, extraHeadHtml = '', extraBodyHtml = '') {
   const components = jsxBodies.map((body, i) => {
     // get_jsx wraps output in ( ... ) — strip outer parens if present
     let cleaned = body.trim();
@@ -175,15 +186,17 @@ const html = \`<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 ${FONT_LINKS}
+${extraHeadHtml}
 <style>
   @page { size: 832px 1178px; margin: 0; }
   html, body { margin: 0; padding: 0; background: #FAFAFA; font-optical-sizing: auto; }
   * { -webkit-print-color-adjust: exact; print-color-adjust: exact; box-sizing: border-box; }
-  .page { width: 832px; height: 1178px; overflow: hidden; }
+  .page { width: 832px; height: 1178px; overflow: hidden; position: relative; }
 </style>
 </head>
 <body>
 \${pagesHtml}
+${extraBodyHtml}
 </body>
 </html>\`;
 
@@ -194,7 +207,7 @@ console.log(\`wrote \${${JSON.stringify(htmlOutputPath)}} (\${html.length} bytes
 
 // --- Chrome ---
 
-function findChrome(override) {
+export function findChrome(override) {
   if (override) {
     try { accessSync(override); return override; } catch {
       console.error(`Chrome not found at ${override}`);
@@ -206,6 +219,101 @@ function findChrome(override) {
   }
   console.error('Chrome not found. Use --chrome to specify the path.');
   process.exit(1);
+}
+
+// --- High-level pipeline (extracted) ---
+
+// Fetch and font-normalize JSX for each frame. Side-effects: prints progress.
+export async function fetchJsxBodies(client, frames) {
+  const jsxBodies = [];
+  for (const frame of frames) {
+    process.stdout.write(`  fetching ${frame.name}...`);
+    const result = await client.callTool({
+      name: 'get_jsx',
+      arguments: { nodeId: frame.id, format: 'inline-styles' },
+    });
+    const text = result.content?.find(c => c.type === 'text')?.text;
+    if (!text) {
+      console.error(' failed — no JSX returned');
+      process.exit(1);
+    }
+    let jsx;
+    try { jsx = JSON.parse(text); } catch { jsx = text; }
+    jsx = normalizeFonts(jsx);
+    jsxBodies.push(jsx);
+    console.log(' ok');
+  }
+  return jsxBodies;
+}
+
+// Build a JSX file, esbuild it, run it to render HTML, then run the three
+// optimisation passes (blooms → remotes → photos). Returns { htmlPath, cleanup }.
+export async function renderOptimizedHtml({ jsxBodies, tag, keep = false, extraHeadHtml = '', extraBodyHtml = '' }) {
+  const jsxPath = resolve(__dirname, `_generated_${tag}_pages.jsx`);
+  const cjsPath = resolve(__dirname, `_generated_${tag}_out.cjs`);
+  const htmlPath = resolve(__dirname, `_generated_${tag}_doc.html`);
+
+  const jsxContent = buildJsxFile(jsxBodies, htmlPath, extraHeadHtml, extraBodyHtml);
+  writeFileSync(jsxPath, jsxContent);
+  console.log(`wrote ${jsxPath}`);
+
+  console.log('compiling...');
+  await esbuild.build({
+    entryPoints: [jsxPath],
+    bundle: true,
+    platform: 'node',
+    outfile: cjsPath,
+    logLevel: 'error',
+  });
+
+  console.log('rendering HTML...');
+  execFileSync('node', [cjsPath], { stdio: 'inherit' });
+
+  console.log('collapsing blooms to shared images...');
+  const rendered = readFileSync(htmlPath, 'utf8');
+  const bloomPass = await optimizeBlooms(rendered);
+  const bp = bloomPass.summary;
+  console.log(`  ${bp.replaced} gradient instances → ${bp.unique} unique PNG XObject${bp.unique === 1 ? '' : 's'}`);
+
+  console.log('embedding remote assets...');
+  const embedPass = await embedRemoteImages(bloomPass.html);
+  const ep = embedPass.summary;
+  console.log(`  ${ep.unique}/${ep.count} remote images embedded (${formatBytes(ep.bytes)})`);
+
+  const photoPass = await optimizeImages(embedPass.html);
+  const ps = photoPass.summary;
+  if (ps.count) {
+    const savings = ps.before - ps.after;
+    const pct = ps.before ? Math.round((savings / ps.before) * 100) : 0;
+    const classSummary = Object.entries(ps.classCounts || {})
+      .map(([k, v]) => `${v} ${k}`).join(', ');
+    console.log(`  ${ps.count} raster images: ${formatBytes(ps.before)} → ${formatBytes(ps.after)} (-${pct}%) [${classSummary}]`);
+  }
+
+  writeFileSync(htmlPath, photoPass.html);
+
+  const cleanup = () => {
+    if (keep) return;
+    try { unlinkSync(jsxPath); } catch {}
+    try { unlinkSync(cjsPath); } catch {}
+    try { unlinkSync(htmlPath); } catch {}
+  };
+
+  return { htmlPath, jsxPath, cjsPath, cleanup };
+}
+
+// Print an HTML file to PDF via headless Chrome.
+export function printHtmlToPdf({ chrome, htmlPath, outputPdf }) {
+  console.log('printing to PDF...');
+  execFileSync(chrome, [
+    '--headless=new',
+    '--disable-gpu',
+    '--no-pdf-header-footer',
+    '--virtual-time-budget=15000',
+    `--print-to-pdf=${outputPdf}`,
+    '--print-to-pdf-no-header',
+    `file://${htmlPath}`,
+  ], { stdio: 'pipe' });
 }
 
 // --- Entry point ---
@@ -237,7 +345,6 @@ export async function runPdf(argv) {
 
   console.log('connected to Paper MCP');
 
-  // Get artboards
   const info = await callTool(client, 'get_basic_info');
   const artboards = info.artboards;
 
@@ -257,110 +364,23 @@ export async function runPdf(argv) {
     process.exit(1);
   }
 
-  // Resolve frames
   const frames = resolveFrames(artboards, prefix);
   console.log(`found ${frames.length} frames: ${frames.map(f => f.name).join(', ')}`);
 
-  // Fetch JSX for each frame
-  const jsxBodies = [];
-  for (const frame of frames) {
-    process.stdout.write(`  fetching ${frame.name}...`);
-    const result = await client.callTool({
-      name: 'get_jsx',
-      arguments: { nodeId: frame.id, format: 'inline-styles' },
-    });
-    const text = result.content?.find(c => c.type === 'text')?.text;
-    if (!text) {
-      console.error(` failed — no JSX returned`);
-      process.exit(1);
-    }
-    // get_jsx returns a JSON-encoded string — parse it
-    let jsx;
-    try {
-      jsx = JSON.parse(text);
-    } catch {
-      jsx = text;
-    }
-    jsx = normalizeFonts(jsx);
-    jsxBodies.push(jsx);
-    console.log(' ok');
-  }
+  const jsxBodies = await fetchJsxBodies(client, frames);
 
   await client.close();
   console.log('disconnected from Paper MCP');
 
-  // Build paths
   const outputPdf = resolve(flags.output || `${prefix}.pdf`);
   const tag = `${prefix}_${process.pid}`;
-  const jsxPath = resolve(__dirname, `_generated_${tag}_pages.jsx`);
-  const cjsPath = resolve(__dirname, `_generated_${tag}_out.cjs`);
-  const htmlPath = resolve(__dirname, `_generated_${tag}_doc.html`);
 
-  // Write JSX file
-  const jsxContent = buildJsxFile(jsxBodies, htmlPath);
-  writeFileSync(jsxPath, jsxContent);
-  console.log(`wrote ${jsxPath}`);
+  const { htmlPath, cleanup } = await renderOptimizedHtml({ jsxBodies, tag, keep: flags.keep });
 
-  // Compile with esbuild
-  console.log('compiling...');
-  await esbuild.build({
-    entryPoints: [jsxPath],
-    bundle: true,
-    platform: 'node',
-    outfile: cjsPath,
-    logLevel: 'error',
-  });
-
-  // Render HTML
-  console.log('rendering HTML...');
-  execFileSync('node', [cjsPath], { stdio: 'inherit' });
-
-  // Bloom pass: CSS radial-gradients → shared PNG XObjects.
-  // Derived from the gradient string itself so new Paper colors Just Work.
-  console.log('collapsing blooms to shared images...');
-  const rendered = readFileSync(htmlPath, 'utf8');
-  const bloomPass = await optimizeBlooms(rendered);
-  const bp = bloomPass.summary;
-  console.log(`  ${bp.replaced} gradient instances → ${bp.unique} unique PNG XObject${bp.unique === 1 ? '' : 's'}`);
-
-  // Embed Paper CDN assets as data URIs so Chrome doesn't pull them at native res.
-  console.log('embedding remote assets...');
-  const embedPass = await embedRemoteImages(bloomPass.html);
-  const ep = embedPass.summary;
-  console.log(`  ${ep.unique}/${ep.count} remote images embedded (${formatBytes(ep.bytes)})`);
-
-  // Photo pass: embedded raster data URIs → entropy-classified compression.
-  const photoPass = await optimizeImages(embedPass.html);
-  const ps = photoPass.summary;
-  if (ps.count) {
-    const savings = ps.before - ps.after;
-    const pct = ps.before ? Math.round((savings / ps.before) * 100) : 0;
-    const classSummary = Object.entries(ps.classCounts || {})
-      .map(([k, v]) => `${v} ${k}`).join(', ');
-    console.log(`  ${ps.count} raster images: ${formatBytes(ps.before)} → ${formatBytes(ps.after)} (-${pct}%) [${classSummary}]`);
-  }
-
-  writeFileSync(htmlPath, photoPass.html);
-
-  // Print to PDF
   const chrome = findChrome(flags.chrome);
-  console.log('printing to PDF...');
-  execFileSync(chrome, [
-    '--headless=new',
-    '--disable-gpu',
-    '--no-pdf-header-footer',
-    '--virtual-time-budget=15000',
-    `--print-to-pdf=${outputPdf}`,
-    '--print-to-pdf-no-header',
-    `file://${htmlPath}`,
-  ], { stdio: 'pipe' });
+  printHtmlToPdf({ chrome, htmlPath, outputPdf });
 
   console.log(`done: ${outputPdf}`);
 
-  // Cleanup
-  if (!flags.keep) {
-    try { unlinkSync(jsxPath); } catch {}
-    try { unlinkSync(cjsPath); } catch {}
-    try { unlinkSync(htmlPath); } catch {}
-  }
+  cleanup();
 }

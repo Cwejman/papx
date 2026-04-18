@@ -3,9 +3,10 @@
 CLI for [Paper](https://paper.design) design tools. Turns artboards into optimised outputs via Paper's local MCP server.
 
 ```sh
-npx papx pdf vp              # build vp.pdf from Paper frames vp/1, vp/2, ...
-npx papx pdf ww -o web.pdf   # custom output path
-npx papx pdf --list          # list available artboards
+npx papx pdf vp                     # build vp.pdf from Paper frames vp/1, vp/2, ...
+npx papx pdf ww -o web.pdf          # custom output path
+npx papx pdf --list                 # list available artboards
+npx papx form contract-artboard     # build a fillable PDF (AcroForm)
 ```
 
 ## Commands
@@ -13,6 +14,7 @@ npx papx pdf --list          # list available artboards
 | Command | Description |
 |---|---|
 | `papx pdf <prefix>` | Build an optimised PDF from artboards named `<prefix>/1`, `<prefix>/2`, … — [docs](docs/pdf.md) |
+| `papx form <arg>` | Build a fillable PDF; text nodes named `{field:<key>}` become AcroForm text fields — [docs](docs/form.md) |
 
 Run `papx <command> --help` for command-specific flags.
 

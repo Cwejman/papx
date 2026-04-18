@@ -3,16 +3,20 @@
 //
 // Subcommands:
 //   pdf <prefix>   Build a PDF from Paper artboards named <prefix>/N.
+//   form <arg>     Build a fillable PDF; {field:key} layer names → AcroForm.
 //
 // Each subcommand has its own --help:
 //   papx pdf --help
+//   papx form --help
 
 import { runPdf, PDF_HELP } from '../src/pdf.js';
+import { runForm, FORM_HELP } from '../src/form.js';
 
 const ROOT_HELP = `Usage: papx <command> [options]
 
 Commands:
-  pdf <prefix>     Build an optimised PDF from Paper artboards
+  pdf <prefix>                 Build an optimised PDF from Paper artboards
+  form <prefix-or-artboard>    Build a fillable PDF (AcroForm) from {field:*} nodes
 
 Run 'papx <command> --help' for command-specific options.
 See the README for details: https://github.com/Cwejman/papx`;
@@ -38,6 +42,9 @@ async function main() {
   switch (subcommand) {
     case 'pdf':
       await runPdf(rest);
+      break;
+    case 'form':
+      await runForm(rest);
       break;
     default:
       console.error(`Unknown command: ${subcommand}\n`);
