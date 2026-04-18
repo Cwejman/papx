@@ -1,8 +1,6 @@
-#!/usr/bin/env node
 // Paper MCP → PDF generator.
-// Usage: node generate.js <prefix>          → fetches prefix/1, prefix/2, ... → <prefix>.pdf
-//        node generate.js <prefix> -o x.pdf → custom output path
-//        node generate.js --list            → list artboards
+// Exposed as `runPdf(argv)` — the bin/papx.js dispatcher forwards its
+// subcommand-args here.
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
@@ -29,40 +27,38 @@ const FONT_LINKS = `
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&family=EB+Garamond:ital,wght@1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">`;
 
-// --- CLI ---
+export const PDF_HELP = `Usage: papx pdf [options] <prefix>
 
-const { values: flags, positionals } = parseArgs({
-  options: {
-    output: { type: 'string', short: 'o' },
-    list: { type: 'boolean', default: false },
-    'mcp-url': { type: 'string', default: 'http://127.0.0.1:29979/mcp' },
-    keep: { type: 'boolean', default: false },
-    chrome: { type: 'string' },
-    help: { type: 'boolean', short: 'h', default: false },
-  },
-  allowPositionals: true,
-});
-
-if (flags.help) {
-  console.log(`Usage: node generate.js [options] <prefix>
-
-Fetches frames named <prefix>/1, <prefix>/2, ... from Paper, sorts numerically, and builds a PDF.
+Fetches frames named <prefix>/1, <prefix>/2, ... from Paper, sorts numerically, and builds an optimised PDF.
 
 Options:
-  --output, -o <path>   Output PDF path (default: <prefix>.pdf)
+  -o, --output <path>   PDF output path (default: <prefix>.pdf)
   --list                List available artboards and exit
   --mcp-url <url>       MCP endpoint (default: http://127.0.0.1:29979/mcp)
   --keep                Keep intermediate files
   --chrome <path>       Chrome binary path
-  -h, --help            Show this help`);
-  process.exit(0);
+  -h, --help            Show this help`;
+
+function parsePdfArgs(argv) {
+  return parseArgs({
+    args: argv,
+    options: {
+      output: { type: 'string', short: 'o' },
+      list: { type: 'boolean', default: false },
+      'mcp-url': { type: 'string', default: 'http://127.0.0.1:29979/mcp' },
+      keep: { type: 'boolean', default: false },
+      chrome: { type: 'string' },
+      help: { type: 'boolean', short: 'h', default: false },
+    },
+    allowPositionals: true,
+  });
 }
 
 // --- MCP Client ---
 
 async function connectMcp(url) {
   const transport = new StreamableHTTPClientTransport(new URL(url));
-  const client = new Client({ name: 'paper-pdf-generator', version: '1.0.0' });
+  const client = new Client({ name: 'papx-pdf', version: '1.0.0' });
   await client.connect(transport);
   return client;
 }
@@ -212,9 +208,23 @@ function findChrome(override) {
   process.exit(1);
 }
 
-// --- Main ---
+// --- Entry point ---
 
-async function main() {
+export async function runPdf(argv) {
+  let flags, positionals;
+  try {
+    ({ values: flags, positionals } = parsePdfArgs(argv));
+  } catch (err) {
+    console.error(err.message);
+    console.error(PDF_HELP);
+    process.exit(1);
+  }
+
+  if (flags.help) {
+    console.log(PDF_HELP);
+    return;
+  }
+
   const mcpUrl = flags['mcp-url'];
 
   let client;
@@ -243,7 +253,7 @@ async function main() {
 
   const prefix = positionals[0];
   if (!prefix) {
-    console.error('Usage: node generate.js <prefix> [-o output.pdf]\n       node generate.js --list');
+    console.error(PDF_HELP);
     process.exit(1);
   }
 
@@ -354,8 +364,3 @@ async function main() {
     try { unlinkSync(htmlPath); } catch {}
   }
 }
-
-main().catch(err => {
-  console.error(err);
-  process.exit(1);
-});

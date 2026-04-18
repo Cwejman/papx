@@ -1,14 +1,46 @@
 {
-  "name": "paper-pdf",
-  "version": "1.0.0",
+  "name": "papx",
+  "version": "0.1.0",
+  "description": "CLI for Paper design tools — build optimised PDFs from Paper artboards via MCP.",
+  "keywords": [
+    "paper",
+    "pdf",
+    "mcp",
+    "design",
+    "cli"
+  ],
   "type": "module",
+  "bin": {
+    "papx": "./bin/papx.js"
+  },
+  "main": "./src/pdf.js",
+  "exports": {
+    ".": "./src/pdf.js",
+    "./bin": "./bin/papx.js"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "docs/",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Cwejman/papx.git"
+  },
+  "homepage": "https://github.com/Cwejman/papx#readme",
+  "bugs": {
+    "url": "https://github.com/Cwejman/papx/issues"
+  },
+  "author": "Cwejman",
+  "license": "MIT",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
     "sharp": "^0.34.5",
