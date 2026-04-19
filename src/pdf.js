@@ -36,9 +36,35 @@ Options:
   -o, --output <path>   PDF output path (default: <prefix>.pdf)
   --list                List available artboards and exit
   --mcp-url <url>       MCP endpoint (default: http://127.0.0.1:29979/mcp)
+  --page-size <name>    Paper size: A4, A5, or Letter (default: artboard size)
+                        Artboard is scaled uniformly to fit.
+  --margin <mm>         Inset from paper edge (default: 0, full-bleed)
+  --bleed <mm>          Extend page on all sides by <mm> (for pro print handoff)
   --keep                Keep intermediate files
   --chrome <path>       Chrome binary path
   -h, --help            Show this help`;
+
+// Paper sizes in millimetres, portrait.
+export const PAGE_SIZES = {
+  A4:     { width: 210, height: 297 },
+  A5:     { width: 148, height: 210 },
+  LETTER: { width: 216, height: 279 },
+};
+
+// Full-bleed by default — blooms and backgrounds reach the paper edge.
+// Home printers will crop ~3–5mm via their unprintable zone; pass --margin
+// to reserve space explicitly.
+const DEFAULT_MARGIN_MM = 0;
+
+// Resolve a `--page-size` string to { width, height } in mm. Case-insensitive.
+export function resolvePageSize(name) {
+  if (!name) return null;
+  const key = name.toUpperCase();
+  if (!PAGE_SIZES[key]) {
+    throw new Error(`Unknown --page-size "${name}". Supported: ${Object.keys(PAGE_SIZES).join(', ')}`);
+  }
+  return { ...PAGE_SIZES[key], name: key };
+}
 
 function parsePdfArgs(argv) {
   return parseArgs({
@@ -47,6 +73,9 @@ function parsePdfArgs(argv) {
       output: { type: 'string', short: 'o' },
       list: { type: 'boolean', default: false },
       'mcp-url': { type: 'string', default: 'http://127.0.0.1:29979/mcp' },
+      'page-size': { type: 'string' },
+      margin: { type: 'string' },
+      bleed: { type: 'string' },
       keep: { type: 'boolean', default: false },
       chrome: { type: 'string' },
       help: { type: 'boolean', short: 'h', default: false },
@@ -155,7 +184,42 @@ export function normalizeFonts(jsx) {
 
 // --- JSX file assembly ---
 
-export function buildJsxFile(jsxBodies, htmlOutputPath, extraHeadHtml = '', extraBodyHtml = '') {
+const PX_PER_MM = 96 / 25.4;
+const BASE_CSS = `
+  html, body { margin: 0; padding: 0; background: #FAFAFA; font-optical-sizing: auto; }
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; box-sizing: border-box; }`;
+
+// Build the page CSS + whether pages need an inner scaling wrapper.
+// `paper` null → page matches artboard pixels, no scaling (default behaviour).
+// `paper` set → artboard scaled uniformly to fit paper (minus margins/bleed).
+export function buildPageShell({ paper, bleedMm = 0, marginMm = 0, artW, artH }) {
+  if (!paper) {
+    return {
+      css: `${BASE_CSS}
+  @page { size: ${artW}px ${artH}px; margin: 0; }
+  .page { width: ${artW}px; height: ${artH}px; overflow: hidden; position: relative; }`,
+      wrapsInner: false,
+    };
+  }
+  const totalW = paper.width + 2 * bleedMm;
+  const totalH = paper.height + 2 * bleedMm;
+  const innerWpx = (totalW - 2 * marginMm) * PX_PER_MM;
+  const innerHpx = (totalH - 2 * marginMm) * PX_PER_MM;
+  const scale = Math.min(innerWpx / artW, innerHpx / artH);
+  const offX = marginMm * PX_PER_MM + (innerWpx - artW * scale) / 2;
+  const offY = marginMm * PX_PER_MM + (innerHpx - artH * scale) / 2;
+  // `zoom` (not `transform: scale`) — zoom resizes the layout box so
+  // Chrome's print-to-PDF doesn't clip content whose DOM extent exceeds @page.
+  return {
+    css: `${BASE_CSS}
+  @page { size: ${totalW}mm ${totalH}mm; margin: 0; }
+  .page { width: ${totalW}mm; height: ${totalH}mm; overflow: hidden; position: relative; background: #FAFAFA; }
+  .page-inner { position: absolute; left: ${offX}px; top: ${offY}px; width: ${artW}px; height: ${artH}px; zoom: ${scale}; }`,
+    wrapsInner: true,
+  };
+}
+
+export function buildJsxFile(jsxBodies, htmlOutputPath, extraHeadHtml = '', extraBodyHtml = '', pageLayout = null) {
   const components = jsxBodies.map((body, i) => {
     // get_jsx wraps output in ( ... ) — strip outer parens if present
     let cleaned = body.trim();
@@ -166,20 +230,25 @@ export function buildJsxFile(jsxBodies, htmlOutputPath, extraHeadHtml = '', extr
   });
 
   const pageList = jsxBodies.map((_, i) => `Page${i}`).join(', ');
+  // Fallback artboard dims for callers (e.g. form.js) that don't pass a layout.
+  const layout = pageLayout ?? { paper: null, artW: 832, artH: 1178 };
+  const { css, wrapsInner } = buildPageShell(layout);
 
   return `import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import fs from 'fs';
-import path from 'path';
 
 ${components.join('\n\n')}
 
 const Pages = [${pageList}];
 const bodies = Pages.map(P => renderToStaticMarkup(React.createElement(P)));
+const wrapsInner = ${wrapsInner};
 
-const pagesHtml = bodies.map((b, i) =>
-  \`<div class="page" style="page-break-before: \${i===0?'auto':'always'};">\${b}</div>\`
-).join('\\n');
+const pagesHtml = bodies.map((b, i) => {
+  const brk = i === 0 ? 'auto' : 'always';
+  const inner = wrapsInner ? \`<div class="page-inner">\${b}</div>\` : b;
+  return \`<div class="page" style="page-break-before: \${brk};">\${inner}</div>\`;
+}).join('\\n');
 
 const html = \`<!DOCTYPE html>
 <html lang="sv">
@@ -187,11 +256,7 @@ const html = \`<!DOCTYPE html>
 <meta charset="utf-8">
 ${FONT_LINKS}
 ${extraHeadHtml}
-<style>
-  @page { size: 832px 1178px; margin: 0; }
-  html, body { margin: 0; padding: 0; background: #FAFAFA; font-optical-sizing: auto; }
-  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; box-sizing: border-box; }
-  .page { width: 832px; height: 1178px; overflow: hidden; position: relative; }
+<style>${css}
 </style>
 </head>
 <body>
@@ -248,12 +313,12 @@ export async function fetchJsxBodies(client, frames) {
 
 // Build a JSX file, esbuild it, run it to render HTML, then run the three
 // optimisation passes (blooms → remotes → photos). Returns { htmlPath, cleanup }.
-export async function renderOptimizedHtml({ jsxBodies, tag, keep = false, extraHeadHtml = '', extraBodyHtml = '' }) {
+export async function renderOptimizedHtml({ jsxBodies, tag, keep = false, extraHeadHtml = '', extraBodyHtml = '', pageLayout = null }) {
   const jsxPath = resolve(__dirname, `_generated_${tag}_pages.jsx`);
   const cjsPath = resolve(__dirname, `_generated_${tag}_out.cjs`);
   const htmlPath = resolve(__dirname, `_generated_${tag}_doc.html`);
 
-  const jsxContent = buildJsxFile(jsxBodies, htmlPath, extraHeadHtml, extraBodyHtml);
+  const jsxContent = buildJsxFile(jsxBodies, htmlPath, extraHeadHtml, extraBodyHtml, pageLayout);
   writeFileSync(jsxPath, jsxContent);
   console.log(`wrote ${jsxPath}`);
 
@@ -316,6 +381,26 @@ export function printHtmlToPdf({ chrome, htmlPath, outputPdf }) {
   ], { stdio: 'pipe' });
 }
 
+// Build a page layout spec from CLI flags + resolved frames.
+// Returns { paper, bleedMm, marginMm, artW, artH }. `paper` is null when no
+// --page-size was passed (content-sized page, no scaling).
+export function buildPageLayout(flags, frames) {
+  const artW = Math.max(...frames.map(f => f.width));
+  const artH = Math.max(...frames.map(f => f.height));
+  const paper = resolvePageSize(flags['page-size']);
+  if (!paper) return { paper: null, artW, artH };
+
+  const bleedMm = flags.bleed ? parseFloat(flags.bleed) : 0;
+  if (Number.isNaN(bleedMm) || bleedMm < 0) {
+    throw new Error(`Invalid --bleed value: ${flags.bleed}`);
+  }
+  const marginMm = flags.margin !== undefined ? parseFloat(flags.margin) : DEFAULT_MARGIN_MM;
+  if (Number.isNaN(marginMm) || marginMm < 0) {
+    throw new Error(`Invalid --margin value: ${flags.margin}`);
+  }
+  return { paper, bleedMm, marginMm, artW, artH };
+}
+
 // --- Entry point ---
 
 export async function runPdf(argv) {
@@ -367,6 +452,20 @@ export async function runPdf(argv) {
   const frames = resolveFrames(artboards, prefix);
   console.log(`found ${frames.length} frames: ${frames.map(f => f.name).join(', ')}`);
 
+  let pageLayout;
+  try {
+    pageLayout = buildPageLayout(flags, frames);
+  } catch (err) {
+    console.error(err.message);
+    process.exit(1);
+  }
+  if (pageLayout.paper) {
+    const { paper, bleedMm, artW, artH } = pageLayout;
+    const tw = paper.width + 2 * bleedMm;
+    const th = paper.height + 2 * bleedMm;
+    console.log(`page size: ${paper.name} ${tw}×${th}mm${bleedMm ? ` (incl. ${bleedMm}mm bleed)` : ''}, artboard ${artW}×${artH}px`);
+  }
+
   const jsxBodies = await fetchJsxBodies(client, frames);
 
   await client.close();
@@ -375,7 +474,7 @@ export async function runPdf(argv) {
   const outputPdf = resolve(flags.output || `${prefix}.pdf`);
   const tag = `${prefix}_${process.pid}`;
 
-  const { htmlPath, cleanup } = await renderOptimizedHtml({ jsxBodies, tag, keep: flags.keep });
+  const { htmlPath, cleanup } = await renderOptimizedHtml({ jsxBodies, tag, keep: flags.keep, pageLayout });
 
   const chrome = findChrome(flags.chrome);
   printHtmlToPdf({ chrome, htmlPath, outputPdf });

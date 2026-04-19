@@ -38,6 +38,8 @@ exact artboard name / node id (for single-page forms).
 
 Options:
   -o, --output <path>   PDF output path (default: <prefix>.pdf)
+  --flatten             Bake field values into static PDF text (no longer editable;
+                        ensures DM Sans renders in any viewer, including Preview)
   --mcp-url <url>       MCP endpoint (default: http://127.0.0.1:29979/mcp)
   --keep                Keep intermediate files
   --chrome <path>       Chrome binary path
@@ -51,6 +53,7 @@ function parseFormArgs(argv) {
     args: argv,
     options: {
       output: { type: 'string', short: 'o' },
+      flatten: { type: 'boolean', default: false },
       'mcp-url': { type: 'string', default: 'http://127.0.0.1:29979/mcp' },
       keep: { type: 'boolean', default: false },
       chrome: { type: 'string' },
@@ -237,18 +240,30 @@ function measureBboxes({ chrome, htmlPath }) {
   return JSON.parse(decoded);
 }
 
-// Overlay AcroForm text fields on the printed PDF.
+// Embed DM Sans (Regular 400 + Medium 500) into the doc so field text
+// matches Paper's typography rather than Helvetica.
+async function embedDmSans(doc) {
+  doc.registerFontkit(fontkit);
+  const regular = await doc.embedFont(readFileSync(DM_SANS_REGULAR_PATH), { subset: true });
+  const medium = await doc.embedFont(readFileSync(DM_SANS_MEDIUM_PATH), { subset: true });
+  return { regular, medium };
+}
+
+// Convert a CSS bbox (top-left origin, px) to PDF coords (bottom-left, pt).
+function bboxToPdf(bbox, pageHeightPt) {
+  const xPt = bbox.x * CSS_PX_TO_PT;
+  const wPt = bbox.w * CSS_PX_TO_PT;
+  const hPt = bbox.h * CSS_PX_TO_PT;
+  const yPt = pageHeightPt - (bbox.y * CSS_PX_TO_PT) - hPt;
+  return { xPt, yPt, wPt, hPt };
+}
+
+// Overlay editable AcroForm text fields on the base PDF.
 async function overlayFormFields({ pdfPath, outputPath, fields, bboxes }) {
   const bytes = readFileSync(pdfPath);
   const doc = await PDFDocument.load(bytes);
-  doc.registerFontkit(fontkit);
   const form = doc.getForm();
-
-  // Embed DM Sans (Regular 400 + Medium 500) so the AcroForm text matches
-  // Paper's typography rather than Helvetica.
-  const dmRegular = await doc.embedFont(readFileSync(DM_SANS_REGULAR_PATH), { subset: true });
-  const dmMedium = await doc.embedFont(readFileSync(DM_SANS_MEDIUM_PATH), { subset: true });
-
+  const { regular, medium } = await embedDmSans(doc);
   const pages = doc.getPages();
 
   let placed = 0;
@@ -259,11 +274,7 @@ async function overlayFormFields({ pdfPath, outputPath, fields, bboxes }) {
     const page = pages[bbox.page ?? 0];
     if (!page) { missing.push(`${f.key} (no page ${bbox.page})`); continue; }
 
-    const pageHeightPt = page.getHeight();
-    const xPt = bbox.x * CSS_PX_TO_PT;
-    const wPt = bbox.w * CSS_PX_TO_PT;
-    const hPt = bbox.h * CSS_PX_TO_PT;
-    const yPt = pageHeightPt - (bbox.y * CSS_PX_TO_PT) - hPt;
+    const { xPt, yPt, wPt, hPt } = bboxToPdf(bbox, page.getHeight());
 
     const pdfField = form.createTextField(f.key);
     if (f.textContent) pdfField.setText(f.textContent);
@@ -272,17 +283,57 @@ async function overlayFormFields({ pdfPath, outputPath, fields, bboxes }) {
       y: yPt,
       width: wPt,
       height: hPt,
-      font: f.fontWeight >= 500 ? dmMedium : dmRegular,
+      font: f.fontWeight >= 600 ? medium : regular,
       textColor: rgb(0.102, 0.09, 0.071), // ≈ #1A1712
       borderWidth: 0,
       backgroundColor: undefined,
     });
-    // Scale text to match Paper's size (in pt, px × 0.75).
     pdfField.setFontSize(f.fontSize * CSS_PX_TO_PT);
     placed++;
   }
 
   const saved = await doc.save({ updateFieldAppearances: true });
+  writeFileSync(outputPath, saved);
+  return { placed, missing };
+}
+
+// Bake field text directly into the page content stream — no AcroForm.
+// Produces a static, non-editable PDF that renders DM Sans correctly in every
+// viewer (no Preview substitution, no flattened-field artefacts like borders).
+async function bakeFieldText({ pdfPath, outputPath, fields, bboxes }) {
+  const bytes = readFileSync(pdfPath);
+  const doc = await PDFDocument.load(bytes);
+  const { regular, medium } = await embedDmSans(doc);
+  const pages = doc.getPages();
+  const textColor = rgb(0.102, 0.09, 0.071); // ≈ #1A1712
+
+  let placed = 0;
+  const missing = [];
+  for (const f of fields) {
+    const bbox = bboxes[f.key];
+    if (!bbox) { missing.push(f.key); continue; }
+    const page = pages[bbox.page ?? 0];
+    if (!page) { missing.push(`${f.key} (no page ${bbox.page})`); continue; }
+
+    const text = f.textContent ?? '';
+    if (!text) { placed++; continue; }
+
+    const sizePt = f.fontSize * CSS_PX_TO_PT;
+    const font = f.fontWeight >= 600 ? medium : regular;
+    const pageHeightPt = page.getHeight();
+
+    // CSS text baseline sits at: top + (lineHeight - fontSize) / 2 + ascent.
+    // For DM Sans, ascent ≈ 0.8 × fontSize is a close approximation.
+    const halfLeadingPx = (bbox.h - f.fontSize) / 2;
+    const baselineFromTopPx = halfLeadingPx + f.fontSize * 0.8;
+    const yBaselinePt = pageHeightPt - (bbox.y + baselineFromTopPx) * CSS_PX_TO_PT;
+    const xPt = bbox.x * CSS_PX_TO_PT;
+
+    page.drawText(text, { x: xPt, y: yBaselinePt, size: sizePt, font, color: textColor });
+    placed++;
+  }
+
+  const saved = await doc.save();
   writeFileSync(outputPath, saved);
   return { placed, missing };
 }
@@ -369,8 +420,9 @@ export async function runForm(argv) {
   const tmpPdf = outputPdf + '.tmp.pdf';
   printHtmlToPdf({ chrome, htmlPath, outputPdf: tmpPdf });
 
-  console.log('overlaying AcroForm fields...');
-  const { placed, missing } = await overlayFormFields({
+  console.log(flags.flatten ? 'baking field text into page (flatten)...' : 'overlaying AcroForm fields...');
+  const overlay = flags.flatten ? bakeFieldText : overlayFormFields;
+  const { placed, missing } = await overlay({
     pdfPath: tmpPdf,
     outputPath: outputPdf,
     fields,
@@ -380,7 +432,7 @@ export async function runForm(argv) {
   try { unlinkSync(tmpPdf); } catch {}
   cleanup();
 
-  console.log(`placed ${placed}/${fields.length} fields${missing.length ? ` — missing: ${missing.join(', ')}` : ''}`);
+  console.log(`placed ${placed}/${fields.length} fields${flags.flatten ? ' (flattened)' : ''}${missing.length ? ` — missing: ${missing.join(', ')}` : ''}`);
   console.log(`done: ${outputPdf}`);
 
   // Surface a designer-facing warning if any field's bbox looks auto-sized.

@@ -1,6 +1,6 @@
 {
   "name": "inkpot",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "CLI for Paper design tools — build optimised PDFs from Paper artboards via MCP.",
   "keywords": [
     "paper",
